@@ -26,20 +26,26 @@ public class AppFolioMailer {
             throw new java.io.FileNotFoundException("Physical file disappeared from CAS bunker: " + physicalCasPath);
         }
 
-        MimeMessage message = mailSender.createMimeMessage();
+        // GUARDIA DE EXTENSIÓN: AppFolio requiere estrictamente la extensión .pdf para procesar
+        String safeFilename = originalFilename;
+        if (!safeFilename.toLowerCase().endsWith(".pdf")) {
+            safeFilename += ".pdf";
+        }
 
-        // El parametro true habilita el modo Multipart para soportar adjuntos binarios
+        MimeMessage message = mailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
         helper.setTo(targetEmail);
-        helper.setSubject("AutoStack Smart Sync Token - " + originalFilename);
+        helper.setSubject("AutoStack Smart Sync Token - " + safeFilename);
+
+        // 1. Primero se asocian los recursos binarios al árbol MIME
+        FileSystemResource asset = new FileSystemResource(pdfFile);
+        helper.addAttachment(safeFilename, asset);
+
+        // 2. Al final se escribe el texto para asegurar la correcta estructura Multipart
         helper.setText("Transmision automatizada de documento financiero.");
 
-        // Adjuntar el archivo usando abstracciones eficientes de recursos de Spring
-        FileSystemResource asset = new FileSystemResource(pdfFile);
-        helper.addAttachment(originalFilename, asset);
-
         mailSender.send(message);
-        log.info("[SMTP_DISPATCH_SUCCESS] Attached '{}' and routed to AppFolio pipeline.", originalFilename);
+        log.info("[SMTP_DISPATCH_SUCCESS] Attached '{}' and routed to AppFolio pipeline.", safeFilename);
     }
 }
