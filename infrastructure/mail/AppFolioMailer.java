@@ -3,6 +3,7 @@ package com.reiter.autostack.infrastructure.mail;
 import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -15,7 +16,10 @@ public class AppFolioMailer {
     private static final Logger log = LoggerFactory.getLogger(AppFolioMailer.class);
     private final JavaMailSender mailSender;
 
-    // Spring Boot inyecta de forma automatica el JavaMailSender usando el starter-mail
+    // Inyecta de forma dinámica el correo corporativo configurado en tus properties
+    @Value("${spring.mail.username}")
+    private String fromEmail;
+
     public AppFolioMailer(JavaMailSender mailSender) {
         this.mailSender = mailSender;
     }
@@ -35,6 +39,8 @@ public class AppFolioMailer {
         MimeMessage message = mailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
+        // Obliga al árbol MIME a firmar con tu dominio corporativo autenticado
+        helper.setFrom(fromEmail);
         helper.setTo(targetEmail);
         helper.setSubject("AutoStack Smart Sync Token - " + safeFilename);
 

@@ -18,13 +18,13 @@ public class MiamiDadeWaterSewerExtractor implements RoutingExtractor {
     // Código único del proveedor alineado con tus propiedades de base de datos
     private static final String VENDOR_CODE = "MIAMIDADE_WATER_AND_SEWER";
 
-    // 🛡️ FIRMA DE PROVEEDOR ROBUSTA: Captura el identificador del departamento o la marca institucional
+    // FIRMA DE PROVEEDOR ROBUSTA: Captura el identificador del departamento o la marca institucional
     private static final Pattern MD_IDENTIFIER_PATTERN = Pattern.compile(
             "MIAMI-DADE\\s+WATER\\s+AND\\s+SEWER|MIAMI\\s*DADE\\s*WATER",
             Pattern.CASE_INSENSITIVE
     );
 
-    // 🎯 PATRÓN DE CAPTURA FLEXIBLE: Las facturas de Miami-Dade Water usualmente listan la cuenta
+    // PATRÓN DE CAPTURA FLEXIBLE: Las facturas de Miami-Dade Water usualmente listan la cuenta
     // antes de los números separados por guiones o espacios (ej. "Account Number 00081721124278")
     private static final Pattern ACCOUNT_PATTERN = Pattern.compile(
             "(?:Account\\s+(?:Number|No|#))[^0-9]*([0-9\\- ]{10,20})",

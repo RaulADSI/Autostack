@@ -10,23 +10,22 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-@Order(20) // Se ejecuta de forma determinista en el orden del Router
+@Order(20) // Se ejecuta después de Miami-Dade (Order 10)
 @Component
 public class WasteManagementExtractor implements RoutingExtractor {
     private static final Logger log = LoggerFactory.getLogger(WasteManagementExtractor.class);
 
-    // Alínea el código con el token "WM" usado en tu base de datos y mapping.csv
     private static final String VENDOR_CODE = "WM";
 
-    // 🛡️ FIRMA DE PROVEEDOR ROBUSTA: Exige el nombre comercial oficial o su dominio web
+    // Identificadores del encabezado
     private static final Pattern WM_IDENTIFIER_PATTERN = Pattern.compile(
             "WASTE\\s+MANAGEMENT|wm\\.com",
             Pattern.CASE_INSENSITIVE
     );
 
-    // 🎯 PATRÓN DE CAPTURA FLEXIBLE: Intercepta identificadores numéricos y guiones
+    // Rango de 10 a 30 para absorber guiones y espacios accidentales del OCR
     private static final Pattern ACCOUNT_PATTERN = Pattern.compile(
-            "(?:Customer\\s+ID|Account\\s+(?:No|Number))[:\\s]+([0-9\\- ]{10,20})",
+            "(?:Customer\\s+ID|Account\\s+(?:No|Number))[:\\s]+([0-9\\- ]{10,30})",
             Pattern.CASE_INSENSITIVE
     );
 
@@ -49,11 +48,10 @@ public class WasteManagementExtractor implements RoutingExtractor {
         if (matcher.find()) {
             String rawAccount = matcher.group(1).trim();
 
-            // 🚀 NORMALIZACIÓN ESPECÍFICA: Conserva números y guiones estructurados,
-            // dinamitando espacios accidentales del OCR (ej: "28 -50742" -> "28-50742")
+            // Conserva números y guiones, eliminando los espacios
             String normalizedAccount = rawAccount.replaceAll("[^0-9\\-]", "");
 
-            // 🛡️ GUARDIA DE SEGURIDAD PERIMETRAL: Las cuentas de WM (con guiones) miden entre 12 y 16 caracteres
+            // Las cuentas de tu CSV (ej. 28-50745-03006) miden exactamente 14 caracteres
             if (normalizedAccount.length() < 10 || normalizedAccount.length() > 16) {
                 log.warn("[WM_GUARD] Cuenta candidata '{}' rechazada por violar límites de longitud.", normalizedAccount);
                 return Optional.empty();
@@ -63,7 +61,7 @@ public class WasteManagementExtractor implements RoutingExtractor {
             return Optional.of(normalizedAccount);
         }
 
-        log.warn("[WM_MISS] Se reconoció el documento de Waste Management, pero la cuenta falló las guardias de extracción.");
+        log.warn("[WM_MISS] Se reconoció el documento de WM, pero falló la extracción de cuenta.");
         return Optional.empty();
     }
 }

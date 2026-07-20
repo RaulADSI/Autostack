@@ -1,5 +1,6 @@
-package com.reiter.autostack.core.engine;
+package com.reiter.autostack.core.engine.extractors;
 
+import com.reiter.autostack.core.engine.RoutingExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.annotation.Order;
@@ -11,8 +12,8 @@ import java.util.regex.Pattern;
 
 @Order(10)
 @Component
-public class FplRoutingExtractor implements RoutingExtractor {
-    private static final Logger log = LoggerFactory.getLogger(FplRoutingExtractor.class);
+public class FPLExtractor implements RoutingExtractor {
+    private static final Logger log = LoggerFactory.getLogger(FPLExtractor.class);
 
     private static final String VENDOR_CODE = "FPL";
 
@@ -47,10 +48,10 @@ public class FplRoutingExtractor implements RoutingExtractor {
         if (matcher.find()) {
             String rawAccount = matcher.group(1).trim();
 
-            // 🚀 NORMALIZACIÓN UNIVERSAL: Eliminación destructiva de basura tipográfica
+            // NORMALIZACIÓN UNIVERSAL: Eliminación destructiva de basura tipográfica
             String normalizedAccount = rawAccount.replaceAll("[^0-9]", "");
 
-            // 🛡️ CONTROL DE LÍMITES OPERATIVOS: Evita capturas parciales de fechas o montos accidentales
+            // CONTROL DE LÍMITES OPERATIVOS: Evita capturas parciales de fechas o montos accidentales
             if (normalizedAccount.length() < 8 || normalizedAccount.length() > 12) {
                 log.warn("[FPL_GUARD] Patrón numérico '{}' interceptado, pero violó los límites de longitud ({} dígitos). Rechazado.",
                         normalizedAccount, normalizedAccount.length());

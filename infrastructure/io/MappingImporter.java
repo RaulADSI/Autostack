@@ -14,6 +14,8 @@ import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.util.HashSet;
+import java.util.Set;
 
 @Component
 public class MappingImporter {
@@ -37,6 +39,9 @@ public class MappingImporter {
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP);
         """;
 
+        // Set de control para evitar duplicados humanos en el archivo físico mapping.csv
+        Set<String> uniqueMappingsCheck = new HashSet<>();
+
         try (BufferedReader reader = Files.newBufferedReader(csvPath);
              Connection conn = DriverManager.getConnection(dbUrl);
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -59,10 +64,29 @@ public class MappingImporter {
                 }
 
                 // Limpiamos espacios accidentales que puedan venir en el Excel/CSV
-                pstmt.setString(1, tokens[0].trim()); // vendor_code (WM)
-                pstmt.setString(2, tokens[1].trim()); // vendor_account (28-50742-03009)
-                pstmt.setString(3, tokens[2].trim()); // property_code (3030)
-                pstmt.setString(4, tokens[3].trim()); // appfolio_email
+                String vendorCode = tokens[0].trim();
+                String vendorAccount = tokens[1].trim();
+                String propertyCode = tokens[2].trim();
+                String appfolioEmail = tokens[3].trim();
+
+                // 🔑 Generamos la llave relacional compuesta única
+                String compositeKey = vendorCode + "::" + vendorAccount;
+
+                // 🛑 CONTROL DE UNICIDAD: Si la combinación Proveedor::Cuenta ya existe en el set, saltamos la línea
+                if (uniqueMappingsCheck.contains(compositeKey)) {
+                    log.error("[IMPORTER_DUPLICATE_ERROR] Línea omitida en 'mapping.csv'. El proveedor '{}' ya tiene asignada la cuenta '{}'. " +
+                                    "Corrige el archivo para evitar conflictos con la propiedad '{}'.",
+                            vendorCode, vendorAccount, propertyCode);
+                    continue;
+                }
+
+                // Registramos la combinación en el set si es nueva
+                uniqueMappingsCheck.add(compositeKey);
+
+                pstmt.setString(1, vendorCode);
+                pstmt.setString(2, vendorAccount);
+                pstmt.setString(3, propertyCode);
+                pstmt.setString(4, appfolioEmail);
                 pstmt.addBatch();
                 count++;
             }
