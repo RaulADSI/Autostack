@@ -99,7 +99,9 @@ public class InvoiceFileWatcher {
             Files.createDirectories(casDirectory);
 
             Path casFinalPath = casDirectory.resolve(sha256 + ".pdf");
-            Files.move(path, casFinalPath, StandardCopyOption.REPLACE_EXISTING);
+
+            // 🚀 Mover a CAS con resiliencia de I/O
+            moveFileToCasResilient(path, casFinalPath);
             log.info("[CAS_STORED] Document committed to immutable vault: {}", casFinalPath);
 
             String extractedText = textExtractionService.extractDocumentText(casFinalPath);
@@ -152,6 +154,7 @@ public class InvoiceFileWatcher {
 
             // Resolviendo el buzón de destino mediante el mapa relacional del CSV
             String targetAppFolioEmail = "UNKNOWN_BUZON";
+            String targetSenderKey = "reiter"; // Fallback inicial
             boolean routeFound = false;
 
             if (match != null && match.routingKey() != null) {
@@ -162,35 +165,60 @@ public class InvoiceFileWatcher {
 
                 if (routeOpt.isPresent()) {
                     targetAppFolioEmail = routeOpt.get().appfolioEmail();
+                    targetSenderKey = routeOpt.get().senderEmailKey(); // 👈 Guarda 'homenow'
                     routeFound = true;
-                    log.info("[ROUTING_SUCCESS] Cuenta '{}' de '{}' asignada con éxito a la propiedad '{}' -> {}",
-                            match.routingKey(), match.vendorCode(), routeOpt.get().propertyCode(), targetAppFolioEmail);
                 }
             }
 
+            // Orquestación Atómica de Carriles mediante la API del Repositorio
             // Orquestación Atómica de Carriles mediante la API del Repositorio
             switch (decision.track()) {
                 case DETERMINISTIC -> {
                     if (!routeFound) {
                         log.warn("[PIPELINE_TRACK] Fast-Track revocado por falta de destino. Forzando triaje manual.");
-                        repository.registerNewInvoice(sha256, filename, casFinalPath.toString(), "UNKNOWN_BUZON", InvoiceStatus.REVIEW_REQUIRED, "DETERMINISTIC_MISSING_ROUTE", legacyResult);
+                        repository.registerNewInvoice(sha256, filename, casFinalPath.toString(), "UNKNOWN_BUZON", targetSenderKey, InvoiceStatus.REVIEW_REQUIRED, "DETERMINISTIC_MISSING_ROUTE", legacyResult);
                     } else {
                         log.info("[PIPELINE_TRACK] Route cleared: FAST_TRACK determinista aprobado.");
-                        repository.registerNewInvoice(sha256, filename, casFinalPath.toString(), targetAppFolioEmail, InvoiceStatus.NEW, "DETERMINISTIC", legacyResult);
+                        // 🚀 Pasamos targetSenderKey ('homenow' o 'reiter') para persistirlo en SQLite desde el nacimiento
+                        repository.registerNewInvoice(sha256, filename, casFinalPath.toString(), targetAppFolioEmail, targetSenderKey, InvoiceStatus.NEW, "DETERMINISTIC", legacyResult);
                     }
                 }
 
                 case HUMAN_AUDIT -> {
-                    repository.registerNewInvoice(sha256, filename, casFinalPath.toString(), targetAppFolioEmail, InvoiceStatus.REVIEW_REQUIRED, "DETERMINISTIC_AUDIT", legacyResult);
+                    repository.registerNewInvoice(sha256, filename, casFinalPath.toString(), targetAppFolioEmail, targetSenderKey, InvoiceStatus.REVIEW_REQUIRED, "DETERMINISTIC_AUDIT", legacyResult);
                 }
 
                 case INTELLIGENCE_AI -> {
-                    repository.registerNewInvoice(sha256, filename, casFinalPath.toString(), targetAppFolioEmail, InvoiceStatus.AI_PROCESSING, "FALLBACK_AI", legacyResult);
+                    repository.registerNewInvoice(sha256, filename, casFinalPath.toString(), targetAppFolioEmail, targetSenderKey, InvoiceStatus.AI_PROCESSING, "FALLBACK_AI", legacyResult);
                 }
             }
 
         } catch (Exception e) {
             log.error("[INGESTION_CRASH] Critical failure handling ingestion pipeline for '{}': {}", filename, e.getMessage());
+        }
+    }
+
+    /**
+     * 🛡️ Mueve un archivo a la boveda CAS garantizando tolerancia a bloqueos temporales de Windows.
+     */
+    private void moveFileToCasResilient(Path source, Path target) throws IOException {
+        for (int i = 0; i < 5; i++) {
+            try {
+                Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                return;
+            } catch (IOException e) {
+                if (i == 4) {
+                    // Si el salto atómico falla tras 5 intentos, realizamos copia + borrado seguro
+                    Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+                    Files.deleteIfExists(source);
+                    return;
+                }
+                try {
+                    Thread.sleep(150);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
     }
 

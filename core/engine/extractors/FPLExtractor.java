@@ -17,13 +17,13 @@ public class FPLExtractor implements RoutingExtractor {
 
     private static final String VENDOR_CODE = "FPL";
 
-    // 🛡️ FIRMA DE PROVEEDOR ROBUSTA: Filtra ruidos exigiendo el dominio o la marca institucional larga [cite: 1, 2]
+    // FIRMA DE PROVEEDOR ROBUSTA: Filtra ruidos exigiendo el dominio o la marca institucional larga [cite: 1, 2]
     private static final Pattern FPL_IDENTIFIER_PATTERN = Pattern.compile(
             "FLORIDA\\s+POWER\\s*(?:AND|&)\\s*LIGHT|fpl\\.com",
             Pattern.CASE_INSENSITIVE
     );
 
-    // 🎯 PATRÓN DE CAPTURA DE CUENTA: Flexible para capturar el bloque candidato
+    // PATRÓN DE CAPTURA DE CUENTA: Flexible para capturar el bloque candidato
     private static final Pattern ACCOUNT_PATTERN = Pattern.compile(
             "account\\s*(?:number|#)?\\s*[:\\.-]?\\s*([0-9\\- ]{8,20})",
             Pattern.CASE_INSENSITIVE

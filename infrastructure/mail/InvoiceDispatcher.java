@@ -29,12 +29,10 @@ public class InvoiceDispatcher {
         this.repository = repository;
         this.mailer = mailer;
         this.dbUrl = dbUrl;
-
     }
 
     @Scheduled(fixedDelay = 30000)
     public void executeDispatchLoop() {
-        // La consulta SQL ya filtra de forma estricta (status='NEW' OR (status='FAILED' AND retry_count < 5))
         List<Integer> candidateIds = repository.fetchAvailableInvoiceIds(10);
         if (candidateIds.isEmpty()) return;
 
@@ -43,30 +41,39 @@ public class InvoiceDispatcher {
         for (int id : candidateIds) {
             if (!repository.tryClaimInvoice(id)) continue;
 
+            String sql = """
+    SELECT original_filename, 
+           appfolio_email, 
+           stored_path, 
+           retry_count,
+           COALESCE(sender_email_key, 'reiter') AS active_tenant_key
+    FROM invoices
+    WHERE id = ?
+""";
+
             try (Connection conn = DriverManager.getConnection(dbUrl);
-                 PreparedStatement pstmt = conn.prepareStatement("SELECT * FROM invoices WHERE id = ?")) {
+                 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
                 pstmt.setInt(1, id);
                 try (ResultSet rs = pstmt.executeQuery()) {
                     if (rs.next()) {
                         int currentRetries = rs.getInt("retry_count");
-                        String filename = rs.getString("original_filename");
+                        String originalFilename = rs.getString("original_filename");
                         String targetEmail = rs.getString("appfolio_email");
                         String storedPath = rs.getString("stored_path");
+                        String senderKey = rs.getString("active_tenant_key");
 
-                        log.info("[JOB_START] Delivery sequence for ID {} ('{}'). Dispatch track: {}/5",
-                                id, filename, (currentRetries + 1));
+                        log.info("[JOB_START] Delivery sequence for ID {} ('{}'). Dispatch track: {}/5, Tenant: '{}'",
+                                id, originalFilename, (currentRetries + 1), senderKey);
 
-                        mailer.sendInvoice(targetEmail, filename, storedPath);
+                        mailer.sendInvoice(targetEmail, originalFilename, storedPath, senderKey);
                         repository.updateFinalStatus(id, InvoiceStatus.SENT, null);
                     }
                 }
             } catch (Exception ex) {
                 log.error("[SMTP_FAIL] Delivery crashed for record ID {}. Invoking ledger state transition: {}", id, ex.getMessage());
-                // El repositorio incrementará de forma interna el contador y decidirá atómicamente si muta a FAILED o a DEAD
                 repository.updateFinalStatus(id, InvoiceStatus.FAILED, ex.getMessage());
             }
         }
     }
-
 }

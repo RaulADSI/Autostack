@@ -31,7 +31,7 @@ public class InvoiceRepository {
     }
 
     public record ClaimedJob(String sha256, String storedPath, String leaseToken) {}
-    public record PropertyRoute(String propertyCode, String appfolioEmail) {}
+    public record PropertyRoute(String propertyCode, String appfolioEmail, String senderEmailKey) {}
 
     private void verifySqliteVersion() {
         String sql = "SELECT sqlite_version();";
@@ -273,14 +273,23 @@ public class InvoiceRepository {
         }
     }
 
-    public void registerNewInvoice(String sha256, String filename, String casPath, String targetEmail, InvoiceStatus initialStatus, String sourceType, ExtractionResult extraction) {
+    public void registerNewInvoice(
+            String sha256,
+            String filename,
+            String storedPath,
+            String appfolioEmail,
+            String senderEmailKey,
+            InvoiceStatus status,
+            String track,
+            ExtractionResult extraction
+    ) {
         String sql = """
-            INSERT INTO invoices (
-                sha256, original_filename, stored_path, appfolio_email, status, source_type, 
-                vendor, account_number, invoice_number, invoice_date, amount, match_score, 
-                account_confidence, amount_confidence, invoice_confidence, invoice_date_confidence
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """;
+        INSERT INTO invoices (
+            sha256, original_filename, stored_path, appfolio_email, sender_email_key,
+            vendor, account_number, status, pipeline_track, strategy_match_score,
+            source_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    """;
         try (Connection conn = DriverManager.getConnection(dbUrl);
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
@@ -290,46 +299,30 @@ public class InvoiceRepository {
                     .orElse("UNKNOWN_VENDOR");
 
             String acct = (extraction.accountNumber() != null && extraction.accountNumber().value() != null) ? extraction.accountNumber().value() : "NOT_FOUND";
-            String invNum = (extraction.invoiceNumber() != null && extraction.invoiceNumber().value() != null) ? extraction.invoiceNumber().value() : "NOT_FOUND";
-            String invDate = (extraction.invoiceDate() != null && extraction.invoiceDate().value() != null) ? extraction.invoiceDate().value() : "NOT_FOUND";
-            double amnt = (extraction.amount() != null) ? extraction.amount().value() : 0.0;
-
-            double acctConf = (extraction.accountNumber() != null) ? extraction.accountNumber().confidence() : 0.0;
-            double amntConf = (extraction.amount() != null) ? extraction.amount().confidence() : 0.0;
-            double invConf = (extraction.invoiceNumber() != null) ? extraction.invoiceNumber().confidence() : 0.0;
-            double invDateConf = (extraction.invoiceDate() != null) ? extraction.invoiceDate().confidence() : 0.0;
 
             pstmt.setString(1, sha256);
             pstmt.setString(2, filename);
-            pstmt.setString(3, casPath);
-            pstmt.setString(4, targetEmail);
-            pstmt.setString(5, initialStatus.name());
-            pstmt.setString(6, sourceType);
-            pstmt.setString(7, safeVendor);
-            pstmt.setString(8, acct);
-            pstmt.setString(9, invNum);
-            pstmt.setString(10, invDate);
-            pstmt.setDouble(11, amnt);
-            pstmt.setInt(12, extraction.strategyMatchScore());
-            pstmt.setDouble(13, acctConf);
-            pstmt.setDouble(14, amntConf);
-            pstmt.setDouble(15, invConf);
-            pstmt.setDouble(16, invDateConf);
+            pstmt.setString(3, storedPath);
+            pstmt.setString(4, appfolioEmail);
+            pstmt.setString(5, senderEmailKey);
+            pstmt.setString(6, safeVendor);
+            pstmt.setString(7, acct);
+            pstmt.setString(8, status.name());
+            pstmt.setString(9, track);
+            pstmt.setInt(10, extraction.strategyMatchScore());
+            pstmt.setString(11, "WATCHER"); // 👈 Inyección de source_type
 
             pstmt.executeUpdate();
-            log.info("[LEDGER_SECURED] Locked status '{}' for filename '{}'.", initialStatus.name(), filename);
+            log.info("[LEDGER_SECURED] Locked status '{}' for filename '{}'.", status.name(), filename);
         } catch (SQLException e) {
             log.error("[LEDGER_WRITE_FAIL] Database registration aborted: {}", e.getMessage());
         }
     }
 
     // =======================================================================================
-    // 🚀 DISPATCH ENGINE INJECTIONS (Métodos añadidos para solucionar el "cannot find symbol")
+    // 🚀 DISPATCH ENGINE INJECTIONS
     // =======================================================================================
 
-    /**
-     * Busca los IDs que están listos en cola para despacho de correo.
-     */
     public List<Integer> fetchAvailableInvoiceIds(int limit) {
         List<Integer> ids = new ArrayList<>();
         String sql = "SELECT id FROM invoices WHERE status = 'NEW' OR (status = 'FAILED' AND retry_count < 5) ORDER BY id ASC LIMIT ?;";
@@ -347,10 +340,6 @@ public class InvoiceRepository {
         return ids;
     }
 
-    /**
-     * Intenta reclamar una factura de forma atómica cambiando su estado a 'DISPATCHING'.
-     * Retorna verdadero si logró ganar la carrera de concurrencia.
-     */
     public boolean tryClaimInvoice(int id) {
         String sql = "UPDATE invoices SET status = 'DISPATCHING' WHERE id = ? AND (status = 'NEW' OR status = 'FAILED');";
         try (Connection conn = DriverManager.getConnection(dbUrl);
@@ -363,9 +352,6 @@ public class InvoiceRepository {
         }
     }
 
-    /**
-     * Resuelve el veredicto final del SMTP actualizando el registro a SENT o recalculando reintentos.
-     */
     public void updateFinalStatus(int id, InvoiceStatus status, String errorMessage) {
         String sql;
         if (status == InvoiceStatus.FAILED) {
@@ -417,13 +403,13 @@ public class InvoiceRepository {
                 stored_path TEXT NOT NULL,
                 appfolio_email TEXT NOT NULL,
                 status TEXT NOT NULL,
-                source_type TEXT NOT NULL,
+                pipeline_track TEXT NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """;
             stmt.execute(createBaseTableSql);
 
-            // 2. 🚀 NUEVA: Tabla relacional de enrutamiento para el MVP
+            // 2. Tabla relacional de enrutamiento
             String createMappingTableSql = """
             CREATE TABLE IF NOT EXISTS vendor_property_mapping (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -431,6 +417,7 @@ public class InvoiceRepository {
                 vendor_account TEXT NOT NULL,
                 property_code TEXT NOT NULL,
                 appfolio_email TEXT NOT NULL,
+                sender_email_key TEXT DEFAULT 'reiter',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(vendor_code, vendor_account)
@@ -439,28 +426,36 @@ public class InvoiceRepository {
             stmt.execute(createMappingTableSql);
 
             // 3. Inyección segura de columnas evolutivas
-            safelyAddColumn(conn, "vendor", "TEXT");
-            safelyAddColumn(conn, "account_number", "TEXT");
-            safelyAddColumn(conn, "invoice_number", "TEXT");
-            safelyAddColumn(conn, "invoice_date", "TEXT");
-            safelyAddColumn(conn, "amount", "REAL");
-            safelyAddColumn(conn, "match_score", "INTEGER DEFAULT 0");
-            safelyAddColumn(conn, "account_confidence", "REAL DEFAULT 0.0");
-            safelyAddColumn(conn, "amount_confidence", "REAL DEFAULT 0.0");
-            safelyAddColumn(conn, "invoice_confidence", "REAL DEFAULT 0.0");
-            safelyAddColumn(conn, "invoice_date_confidence", "REAL DEFAULT 0.0");
-            safelyAddColumn(conn, "retry_count", "INTEGER DEFAULT 0");
-            safelyAddColumn(conn, "sent_at", "DATETIME");
-            safelyAddColumn(conn, "error_message", "TEXT");
-            safelyAddColumn(conn, "ai_provider", "TEXT");
-            safelyAddColumn(conn, "ai_model", "TEXT");
-            safelyAddColumn(conn, "ai_response", "TEXT");
-            safelyAddColumn(conn, "ai_processed_at", "TEXT");
-            safelyAddColumn(conn, "leased_at", "INTEGER");
-            safelyAddColumn(conn, "leased_by", "TEXT");
-            safelyAddColumn(conn, "lease_recovery_count", "INTEGER DEFAULT 0");
+            safelyAddColumn(conn, "invoices", "sender_email_key", "TEXT DEFAULT 'reiter'");
+            safelyAddColumn(conn, "invoices", "vendor", "TEXT");
+            safelyAddColumn(conn, "invoices", "account_number", "TEXT");
+            safelyAddColumn(conn, "invoices", "invoice_number", "TEXT");
+            safelyAddColumn(conn, "invoices", "invoice_date", "TEXT");
+            safelyAddColumn(conn, "invoices", "amount", "REAL");
+            safelyAddColumn(conn, "invoices", "match_score", "INTEGER DEFAULT 0");
+            safelyAddColumn(conn, "invoices", "account_confidence", "REAL DEFAULT 0.0");
+            safelyAddColumn(conn, "invoices", "amount_confidence", "REAL DEFAULT 0.0");
+            safelyAddColumn(conn, "invoices", "invoice_confidence", "REAL DEFAULT 0.0");
+            safelyAddColumn(conn, "invoices", "invoice_date_confidence", "REAL DEFAULT 0.0");
+            safelyAddColumn(conn, "invoices", "retry_count", "INTEGER DEFAULT 0");
+            safelyAddColumn(conn, "invoices", "sent_at", "DATETIME");
+            safelyAddColumn(conn, "invoices", "error_message", "TEXT");
+            safelyAddColumn(conn, "invoices", "ai_provider", "TEXT");
+            safelyAddColumn(conn, "invoices", "ai_model", "TEXT");
+            safelyAddColumn(conn, "invoices", "ai_response", "TEXT");
+            safelyAddColumn(conn, "invoices", "ai_processed_at", "TEXT");
+            safelyAddColumn(conn, "invoices", "leased_at", "INTEGER");
+            safelyAddColumn(conn, "invoices", "leased_by", "TEXT");
+            safelyAddColumn(conn, "invoices", "lease_recovery_count", "INTEGER DEFAULT 0");
+            safelyAddColumn(conn, "invoices", "sender_email_key", "TEXT DEFAULT 'reiter'");
+            safelyAddColumn(conn, "invoices", "pipeline_track", "TEXT DEFAULT 'DETERMINISTIC'");
+            safelyAddColumn(conn, "invoices", "strategy_match_score", "INTEGER DEFAULT 0");// 👈 AGREGAR ESTA LÍNEA
+            safelyAddColumn(conn, "invoices", "vendor", "TEXT");
+            safelyAddColumn(conn, "invoices", "account_number", "TEXT");
 
-            // 4. Índices de rendimiento óptimo
+            safelyAddColumn(conn, "vendor_property_mapping", "sender_email_key", "TEXT DEFAULT 'reiter'");
+
+            // 4. Índices de rendimiento
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_queue_claim ON invoices(status, id);");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_invoices_status_lease ON invoices(status, leased_at);");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_leased_owner ON invoices(leased_by, status);");
@@ -493,8 +488,8 @@ public class InvoiceRepository {
         }
     }
 
-    private void safelyAddColumn(Connection conn, String columnName, String columnType) {
-        String checkSql = "PRAGMA table_info(invoices);";
+    private void safelyAddColumn(Connection conn, String tableName, String columnName, String columnType) {
+        String checkSql = String.format("PRAGMA table_info(%s);", tableName);
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(checkSql)) {
             boolean exists = false;
@@ -505,17 +500,15 @@ public class InvoiceRepository {
                 }
             }
             if (!exists) {
-                String alterSql = String.format("ALTER TABLE invoices ADD COLUMN %s %s;", columnName, columnType);
+                String alterSql = String.format("ALTER TABLE %s ADD COLUMN %s %s;", tableName, columnName, columnType);
                 stmt.execute(alterSql);
-                log.info("[MIGRATION_ENGINE] Successfully injected column '{}' into table 'invoices'.", columnName);
+                log.info("[MIGRATION_ENGINE] Successfully injected column '{}' into table '{}'.", columnName, tableName);
             }
-        } catch (SQLException e) { log.error("[MIGRATION_ERROR] Failed checking column configuration", e); }
+        } catch (SQLException e) { log.error("[MIGRATION_ERROR] Failed checking column configuration for table {}", tableName, e); }
     }
-    /**
-     * Mapea una cuenta de proveedor directamente a su buzón de AppFolio de forma determinista.
-     */
+
     public Optional<PropertyRoute> resolveRoute(String vendorCode, String vendorAccount) {
-        String sql = "SELECT property_code, appfolio_email FROM vendor_property_mapping WHERE vendor_code = ? AND vendor_account = ?;";
+        String sql = "SELECT property_code, appfolio_email, sender_email_key FROM vendor_property_mapping WHERE vendor_code = ? AND vendor_account = ?;";
         try (Connection conn = DriverManager.getConnection(dbUrl);
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
@@ -526,7 +519,8 @@ public class InvoiceRepository {
                 if (rs.next()) {
                     return Optional.of(new PropertyRoute(
                             rs.getString("property_code"),
-                            rs.getString("appfolio_email")
+                            rs.getString("appfolio_email"),
+                            rs.getString("sender_email_key")
                     ));
                 }
             }
