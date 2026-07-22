@@ -11,8 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.util.Properties;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 public class EmailIntakeBridge {
@@ -65,18 +64,30 @@ public class EmailIntakeBridge {
                 String subject = message.getSubject() != null ? message.getSubject() : "";
                 String from = message.getFrom() != null && message.getFrom().length > 0 ? message.getFrom()[0].toString() : "";
 
-                // Filtro para Waste Management
-                if (subject.toLowerCase().contains("waste management") || subject.toLowerCase().contains("your invoice") || from.contains("wm.com")) {
+                // Filtro para Waste Management / SendGrid
+                if (subject.toLowerCase().contains("waste management")
+                        || subject.toLowerCase().contains("your invoice")
+                        || subject.toLowerCase().contains("fwd:")
+                        || from.contains("wm.com")) {
+
                     log.info("[EMAIL_MATCH] Notificación de factura detectada de WM: '{}'", subject);
 
                     String htmlContent = getTextFromMessage(message);
-                    String pdfLink = extractPdfUrlFromHtml(htmlContent);
+                    Set<String> pdfLinks = extractPdfUrlsFromHtml(htmlContent);
 
-                    if (pdfLink != null) {
-                        String generatedName = "wm_link_" + UUID.randomUUID().toString().substring(0, 8) + ".pdf";
-                        pdfDownloader.downloadPdfFromLink(pdfLink, generatedName);
+                    if (!pdfLinks.isEmpty()) {
+                        log.info("[BRIDGE_MULTI_LINK] Se encontraron {} enlaces de facturas en el correo.", pdfLinks.size());
 
-                        // Marcar correo como leído para no reprocesar
+                        int linkIndex = 1;
+                        for (String pdfLink : pdfLinks) {
+                            String generatedName = String.format("wm_link_%s_%d.pdf",
+                                    UUID.randomUUID().toString().substring(0, 8),
+                                    linkIndex++);
+
+                            pdfDownloader.downloadPdfFromLink(pdfLink, generatedName);
+                        }
+
+                        // Marcar correo como leído solo tras procesar los enlaces
                         message.setFlag(Flags.Flag.SEEN, true);
                     }
                 }
@@ -90,21 +101,30 @@ public class EmailIntakeBridge {
         }
     }
 
-    private String extractPdfUrlFromHtml(String html) {
-        if (html == null || html.isBlank()) return null;
+    /**
+     * Extrae TODOS los enlaces únicos de facturas presentes en el cuerpo HTML
+     */
+    private Set<String> extractPdfUrlsFromHtml(String html) {
+        if (html == null || html.isBlank()) return Collections.emptySet();
 
         Document doc = Jsoup.parse(html);
+        Set<String> uniqueLinks = new LinkedHashSet<>();
 
-        // Buscar enlaces que contengan palabras clave de descarga o dominios de WM
         for (Element link : doc.select("a[href]")) {
             String href = link.attr("href");
-            String text = link.text().toLowerCase();
+            String text = link.text().toLowerCase().trim();
 
-            if (text.contains("view invoice") || text.contains("download") || text.contains("ver factura") || href.contains("wm.com")) {
-                return href;
+            // Criterios de coincidencia (Texto del botón o Dominios conocidos)
+            if (text.contains("view invoice")
+                    || text.contains("download")
+                    || text.contains("ver factura")
+                    || href.contains("wm.com")
+                    || href.contains("sendgrid.net")) {
+
+                uniqueLinks.add(href);
             }
         }
-        return null;
+        return uniqueLinks;
     }
 
     private String getTextFromMessage(Message message) throws Exception {
