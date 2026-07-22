@@ -23,9 +23,9 @@ public class WasteManagementExtractor implements RoutingExtractor {
             Pattern.CASE_INSENSITIVE
     );
 
-    // Rango de 10 a 30 para absorber guiones y espacios accidentales del OCR
+    // 🔧 MEJORA 1: Soporta 'Account #', 'Account Number', 'Customer ID' y evita captura voraz de texto continuo
     private static final Pattern ACCOUNT_PATTERN = Pattern.compile(
-            "(?:Customer\\s+ID|Account\\s+(?:No|Number))[:\\s]+([0-9\\- ]{10,30})",
+            "(?:Customer\\s+ID|Account\\s*(?:Number|No|#)?)[\\s:#]+([0-9]{2,3}[\\s\\-][0-9]{5}[\\s\\-][0-9]{5}|[0-9\\-]{10,18})",
             Pattern.CASE_INSENSITIVE
     );
 
@@ -44,20 +44,31 @@ public class WasteManagementExtractor implements RoutingExtractor {
     public Optional<String> extractRoutingKey(String text) {
         if (text == null || text.isBlank()) return Optional.empty();
 
-        Matcher matcher = ACCOUNT_PATTERN.matcher(text);
+        // Normalización básica de saltos de línea para evitar romper la lectura de la cuenta
+        String normalizedText = text.replace('\r', ' ').replace('\n', ' ');
+
+        Matcher matcher = ACCOUNT_PATTERN.matcher(normalizedText);
         if (matcher.find()) {
             String rawAccount = matcher.group(1).trim();
 
-            // Conserva números y guiones, eliminando los espacios
+            // Conserva números y guiones, eliminando los espacios intermedios del OCR
             String normalizedAccount = rawAccount.replaceAll("[^0-9\\-]", "");
 
-            // Las cuentas de tu CSV (ej. 28-50745-03006) miden exactamente 14 caracteres
+            // Formatear si viene solo con dígitos sin guiones (ej: 244903033005 -> 24-49030-33005)
+            if (!normalizedAccount.contains("-") && normalizedAccount.length() == 12) {
+                normalizedAccount = String.format("%s-%s-%s",
+                        normalizedAccount.substring(0, 2),
+                        normalizedAccount.substring(2, 7),
+                        normalizedAccount.substring(7, 12));
+            }
+
+            // Validar límites de longitud para formato formateado XX-XXXXX-XXXXX (14 chars)
             if (normalizedAccount.length() < 10 || normalizedAccount.length() > 16) {
                 log.warn("[WM_GUARD] Cuenta candidata '{}' rechazada por violar límites de longitud.", normalizedAccount);
                 return Optional.empty();
             }
 
-            log.info("[WM_MATCH] Enrutamiento limpio resuelto: {}", normalizedAccount);
+            log.info("[WM_MATCH] Enrutamiento limpio resuelto para WM: {}", normalizedAccount);
             return Optional.of(normalizedAccount);
         }
 
