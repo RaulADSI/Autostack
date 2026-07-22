@@ -20,36 +20,38 @@ public class FileIngestionService {
      * 🔧 HARDENING DE DISCO: Monitorea el archivo hasta que el sistema operativo
      * cierre el canal de escritura. Evita procesar archivos parciales.
      */
-    public boolean waitUntilStable(Path path) {
-        try {
-            long sizeBefore = Files.size(path);
-            long sizeAfter = -1;
-            int attempts = 0;
+    private boolean waitUntilStable(Path path) {
+        long previousSize = -1;
+        int stableReadings = 0;
 
-            // Comparamos el tamaño del archivo con un intervalo de 800ms
-            while (sizeBefore != sizeAfter && attempts < 15) {
-                sizeBefore = Files.size(path);
-                Thread.sleep(800);
-                sizeAfter = Files.size(path);
-                attempts++;
+        for (int i = 0; i < 15; i++) { // Reintentar durante 3 segundos máximo
+            try {
+                if (Files.exists(path)) {
+                    long currentSize = Files.size(path);
+                    if (currentSize > 0 && currentSize == previousSize) {
+                        stableReadings++;
+                        if (stableReadings >= 2) {
+                            return true; //Tamaño estable y no está vacío
+                        }
+                    } else {
+                        stableReadings = 0;
+                    }
+                    previousSize = currentSize;
+                }
+            } catch (IOException ignored) {
+                // Reintentar en el siguiente ciclo si el archivo sigue bloqueado por Windows
             }
 
-            if (attempts >= 15) {
-                log.error("[DATA_PLANE_WARN] File stream remained open too long or size is volatile. Aborting: {}", path.getFileName());
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 return false;
             }
-            return true;
-        } catch (IOException | InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("[DATA_PLANE_EXCEPTION] Error checking file stability: {}", e.getMessage());
-            return false;
         }
+        return false;
     }
 
-    /**
-     * 🔮 VERIFICACIÓN DE FIRMA MÁGICA: Abre el binario en modo lectura pura
-     * y extrae los primeros 4 bytes para confirmar que estructuralmente es un %PDF.
-     */
     public boolean verifyFileSanity(Path path) {
         // Primero asegurar que la escritura terminó por completo
         if (!waitUntilStable(path)) return false;
@@ -82,7 +84,7 @@ public class FileIngestionService {
     }
 
     /**
-     * ☣️ AISLAMIENTO OPERACIONAL: Mueve físicamente el binario contaminado
+     * AISLAMIENTO OPERACIONAL: Mueve físicamente el binario contaminado
      * a la zona de cuarentena para auditoría manual preventiva.
      */
     public void isolateToQuarantine(Path path) {

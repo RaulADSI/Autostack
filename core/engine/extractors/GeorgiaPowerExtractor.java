@@ -1,12 +1,14 @@
 package com.reiter.autostack.core.engine.extractors;
 
 import com.reiter.autostack.core.engine.RoutingExtractor;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+@Order(40)
 @Component
 public class GeorgiaPowerExtractor implements RoutingExtractor {
 

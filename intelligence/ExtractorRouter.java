@@ -13,7 +13,7 @@ import java.util.Optional;
 public class ExtractorRouter {
     private static final Logger log = LoggerFactory.getLogger(ExtractorRouter.class);
 
-    // 🛡️ PROTECCIÓN DE RENDIMIENTO: Límite duro de escaneo para firmas (Cabecera de ~1.5 páginas)
+    // PROTECCIÓN DE RENDIMIENTO: Límite duro de escaneo para firmas (Cabecera de ~1.5 páginas)
     private static final int MAX_HEADER_SCAN_CHARS = 6000;
 
     private final List<RoutingExtractor> extractors;
@@ -37,7 +37,7 @@ public class ExtractorRouter {
             return new TriageDecision(Track.INTELLIGENCE_AI, null);
         }
 
-        // 🧠 OPTIMIZACIÓN ACELERADA: Slicing defensivo para evitar repeticiones innecesarias de Regex
+        // OPTIMIZACIÓN ACELERADA: Slicing defensivo para evitar repeticiones innecesarias de Regex
         String headerText = text.substring(0, Math.min(text.length(), MAX_HEADER_SCAN_CHARS));
 
         for (RoutingExtractor extractor : extractors) {
@@ -56,7 +56,7 @@ public class ExtractorRouter {
                 incrementRouterMetric("deterministic", vendor, "success");
                 return new TriageDecision(Track.DETERMINISTIC, new RoutingMatch(vendor, routingKey));
             } else {
-                // 🛑 PUNTO 3: Cortocircuito defensivo. Si el proveedor existe pero no hay cuenta,
+                // PUNTO 3: Cortocircuito defensivo. Si el proveedor existe pero no hay cuenta,
                 // forzamos triaje humano directo. La IA no debe inventar identidades.
                 log.warn("[ROUTER_MISMATCH] Proveedor '{}' identificado pero violó las guardias de la cuenta.", vendor);
                 incrementRouterMetric("human_audit", vendor, "missing_routing_key");
@@ -64,7 +64,7 @@ public class ExtractorRouter {
             }
         }
 
-        // 🤖 PUNTO 4: Documento totalmente desconocido. Escalada limpia al plano cognitivo.
+        // PUNTO 4: Documento totalmente desconocido. Escalada limpia al plano cognitivo.
         log.info("[ROUTER_FALLBACK] Ningún patrón determinista coincidió. Elevando a INTELLIGENCE_AI.");
         incrementRouterMetric("ai_fallback", "UNKNOWN", "no_vendor_match");
         return new TriageDecision(Track.INTELLIGENCE_AI, null);

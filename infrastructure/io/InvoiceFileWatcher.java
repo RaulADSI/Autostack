@@ -75,7 +75,12 @@ public class InvoiceFileWatcher {
     }
 
     private void processIncomingFile(Path path) {
-        String filename = path.getFileName().toString();
+
+        String filename = path.getFileName().toString().toLowerCase();
+        if (filename.endsWith(".tmp") || filename.endsWith(".crdownload") || filename.startsWith("~")) {
+            log.debug("[WATCHER_SKIP] Omitiendo archivo temporal en escritura: {}", filename);
+            return;
+        }
         log.info("[EVENT_TRIGGERED] New file write detected in intake: {}", filename);
 
         if (!ingestionService.verifyFileSanity(path)) {
@@ -165,12 +170,11 @@ public class InvoiceFileWatcher {
 
                 if (routeOpt.isPresent()) {
                     targetAppFolioEmail = routeOpt.get().appfolioEmail();
-                    targetSenderKey = routeOpt.get().senderEmailKey(); // 👈 Guarda 'homenow'
+                    targetSenderKey = routeOpt.get().senderEmailKey(); //Guarda 'homenow'
                     routeFound = true;
                 }
             }
 
-            // Orquestación Atómica de Carriles mediante la API del Repositorio
             // Orquestación Atómica de Carriles mediante la API del Repositorio
             switch (decision.track()) {
                 case DETERMINISTIC -> {
@@ -199,7 +203,7 @@ public class InvoiceFileWatcher {
     }
 
     /**
-     * 🛡️ Mueve un archivo a la boveda CAS garantizando tolerancia a bloqueos temporales de Windows.
+     * Mueve un archivo a la boveda CAS garantizando tolerancia a bloqueos temporales de Windows.
      */
     private void moveFileToCasResilient(Path source, Path target) throws IOException {
         for (int i = 0; i < 5; i++) {

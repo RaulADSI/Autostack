@@ -447,6 +447,7 @@ public class InvoiceRepository {
             safelyAddColumn(conn, "invoices", "leased_at", "INTEGER");
             safelyAddColumn(conn, "invoices", "leased_by", "TEXT");
             safelyAddColumn(conn, "invoices", "lease_recovery_count", "INTEGER DEFAULT 0");
+            safelyAddColumn(conn, "invoices", "source_type", "TEXT DEFAULT 'WATCHER'");
             safelyAddColumn(conn, "invoices", "sender_email_key", "TEXT DEFAULT 'reiter'");
             safelyAddColumn(conn, "invoices", "pipeline_track", "TEXT DEFAULT 'DETERMINISTIC'");
             safelyAddColumn(conn, "invoices", "strategy_match_score", "INTEGER DEFAULT 0");// 👈 AGREGAR ESTA LÍNEA
